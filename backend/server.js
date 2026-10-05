@@ -1,8 +1,15 @@
 const express = require("express");
 const mongoose = require("mongoose");
-const Employee = require("./models/Employee");
+const cors = require("cors");
+const dashboardRoutes = require("./routes/dashboardRoutes");
 
 const app = express();
+
+// Session 13: the Next.js dev server runs on a different origin
+// (localhost:3000) than this API (localhost:5000) - without CORS the
+// browser blocks the frontend's fetch() calls. Open to all origins here
+// since this is local dev; restrict this in production (Slide 15).
+app.use(cors());
 
 app.use(express.json());
 
@@ -28,22 +35,5 @@ app.get("/", (req, res) => {
     res.send("Full Stack AI Dashboard");
 });
 
-// Read every employee from the "employees" collection
-app.get("/api/employees", async (req, res) => {
-    try {
-        const employees = await Employee.find();
-        res.json(employees);
-    } catch (err) {
-        res.status(500).json({ error: err.message });
-    }
-});
-
-// Create an employee record
-app.post("/api/employees", async (req, res) => {
-    try {
-        const employee = await Employee.create(req.body);
-        res.status(201).json(employee);
-    } catch (err) {
-        res.status(400).json({ error: err.message });
-    }
-});
+// Route -> Controller -> Aggregation -> MongoDB (Session 9)
+app.use("/api/dashboard", dashboardRoutes);

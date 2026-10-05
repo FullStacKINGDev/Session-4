@@ -2,8 +2,12 @@
   "name": "ai-dashboard-session4",
   "version": "1.0.0",
   "description": "",
-  "main": "index.js",
+  "main": "server.js",
   "scripts": {
+    "start": "node server.js",
+    "import": "node importInventory.js",
+    "import:reset": "node importInventory.js --reset",
+    "verify": "node verifyInventory.js",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "keywords": [],
@@ -11,7 +15,9 @@
   "license": "ISC",
   "type": "commonjs",
   "dependencies": {
+    "cors": "^2.8.6",
     "express": "^5.2.1",
-    "mongoose": "^9.9.5"
+    "mongoose": "^9.9.5",
+    "xlsx": "^0.18.5"
   }
 }
