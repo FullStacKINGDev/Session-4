@@ -1,0 +1,8 @@
+# Python virtual environment
+.venv/
+__pycache__/
+*.pyc
+
+# Local ChromaDB persistent storage - rebuild any time with:
+#   python ingest.py --reset
+chroma_data/
