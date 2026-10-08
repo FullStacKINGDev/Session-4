@@ -1,10 +1,13 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
 import Icon from "@/components/Icon";
 import { downloadCsv } from "@/lib/csv";
 import { openCommandPalette } from "@/lib/commandPalette";
 import { openSidebarDrawer } from "@/lib/sidebarDrawer";
+import { logout as logoutRequest } from "@/lib/api";
+import { clearToken } from "@/lib/auth";
 
 type HeaderProps = {
   title: string;
@@ -24,12 +27,25 @@ type HeaderProps = {
 export default function Header({ title, subtitle, exportRows, exportFilename, onRefresh, lastUpdated }: HeaderProps) {
   const [toast, setToast] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
+  const [menuOpen, setMenuOpen] = useState(false);
+  const router = useRouter();
 
   useEffect(() => {
     if (!toast) return;
     const timer = setTimeout(() => setToast(null), 2200);
     return () => clearTimeout(timer);
   }, [toast]);
+
+  // Session 19: real sign-out - invalidates the token server-side (best
+  // effort) and clears it locally, then AuthGuard's own check on the next
+  // /dashboard render sends them to /login. A hard navigation (not
+  // router.push) so nothing from the signed-in session lingers in memory.
+  async function handleLogout() {
+    setMenuOpen(false);
+    await logoutRequest();
+    clearToken();
+    router.push("/login");
+  }
 
   function comingSoon(label: string) {
     setToast(`${label} — coming soon`);
@@ -123,8 +139,34 @@ export default function Header({ title, subtitle, exportRows, exportFilename, on
           <Icon name="refresh" className={`text-[18px] ${refreshing ? "animate-spin" : ""}`} />
         </button>
 
-        <div className="flex h-8 w-8 items-center justify-center rounded-full bg-indigo-600 text-white">
-          <Icon name="person" className="text-[16px]" />
+        <div className="relative">
+          <button
+            type="button"
+            onClick={() => setMenuOpen((open) => !open)}
+            aria-label="Account menu"
+            className="flex h-8 w-8 items-center justify-center rounded-full bg-indigo-600 text-white transition-opacity hover:opacity-90"
+          >
+            <Icon name="person" className="text-[16px]" />
+          </button>
+
+          {menuOpen && (
+            <>
+              {/* Click-outside-to-close backdrop, same pattern CommandPalette
+                  uses for its overlay - a full-screen invisible layer under
+                  the menu, above everything else. */}
+              <div className="fixed inset-0 z-30" onClick={() => setMenuOpen(false)} />
+              <div className="absolute right-0 top-10 z-40 w-40 overflow-hidden rounded-lg border border-gray-200 bg-white py-1 shadow-lg">
+                <button
+                  type="button"
+                  onClick={handleLogout}
+                  className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-gray-700 hover:bg-gray-50"
+                >
+                  <Icon name="logout" className="text-[16px] text-gray-400" />
+                  Log out
+                </button>
+              </div>
+            </>
+          )}
         </div>
       </div>
 

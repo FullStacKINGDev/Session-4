@@ -32,6 +32,9 @@ yarn-error.log*
 
 # env files (can opt-in for committing if needed)
 .env*
+# ...except the template - Session 19 Slide 9 wants this one committed
+# with placeholder values, not ignored like the real .env.local.
+!.env.example
 
 # vercel
 .vercel

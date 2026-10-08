@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import Header from "@/components/Header";
+import AISearch from "@/components/AISearch";
 import ApiState from "@/components/ApiState";
 import KpiCard from "@/components/KpiCard";
 import Icon from "@/components/Icon";
@@ -77,6 +78,11 @@ export default function DashboardPage() {
         onRefresh={load}
         lastUpdated={lastUpdated}
       />
+
+      {/* Session 18: independent of the metrics/projects fetch below - the
+          AI search bar should work (and fail gracefully) on its own, not
+          be gated behind the dashboard's own loading/error state. */}
+      <AISearch />
 
       <ApiState
         loading={loading}
