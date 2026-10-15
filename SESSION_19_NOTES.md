@@ -326,19 +326,158 @@ remembering for any future Windows session in this project: prefer
 always verify the bound PID after a restart rather than assuming it
 worked.
 
+## Second major follow-up, same session: putting the backend on Vercel too
+
+After the `smartSearch.js` pivot, asked directly: *"can't we deploy both
+frontend and backend in vercel?"* Answered honestly before touching
+anything: yes, but it meant undoing part of what this session had just
+built and tested. Three real blockers, explained up front, user
+confirmed all three were worth doing:
+
+1. **The in-memory JWT-less session store (`middleware/auth.js`'s
+   `sessions` Set) doesn't survive serverless.** Vercel functions don't
+   share memory between invocations - a session created on one instance
+   is invisible to the next request if it lands on a different (or
+   freshly cold-started) instance. Fixed by switching to signed JWTs
+   (`jsonwebtoken`, new dependency) - the token carries its own proof of
+   validity via signature, so there's nothing to look up server-side at
+   all. Real, stated tradeoff: logout is now client-side only (nothing
+   left server-side to invalidate) - a discarded token stays
+   cryptographically valid until it expires (`TOKEN_TTL = "24h"`).
+   Verified live: a token still returns 200 from a protected route
+   *after* calling `/api/auth/logout` - not a bug, the honest
+   consequence of statelessness, documented rather than hidden.
+2. **Mongoose's connection assumed a persistent process.** The old
+   `server.js` connected once at boot and relied on staying connected.
+   Extracted the Express app into `backend/app.js` with a cached
+   connection promise (`ensureDbConnected()`, checking
+   `mongoose.connection.readyState` before reconnecting) so a cold
+   serverless instance connects once and warm instances reuse it,
+   instead of risking a new connection per invocation.
+3. **`server.js` called `app.listen()`, which Vercel never runs.**
+   Restructured so `app.js` holds the actual Express app (exported, not
+   listening), `server.js` becomes a thin local-dev-only bootstrapper
+   (`ensureDbConnected().then(() => app.listen(...))`), and new
+   `backend/api/index.js` exports that same app directly for Vercel's
+   Node runtime to call per-request. New `backend/vercel.json` rewrites
+   every path to that one function, so none of the existing route
+   definitions (`/api/auth`, `/api/dashboard`, `/api/ai`) had to change.
+
+**Found two pre-existing, unrelated issues while in here, fixed as a
+reasonable detour, not scope creep**: `importInventory.js` and
+`verifyInventory.js` both still hardcoded `mongodb://localhost:27017/
+dashboardDB` directly in the file - the exact same anti-pattern Slide 8
+already called out and server.js already fixed, just missed in these
+two scripts. Both needed fixing anyway to re-run the import against
+MongoDB Atlas for deployment. Fixed with the same `process.loadEnvFile()`
++ `process.env.MONGODB_URI` pattern, verified `verifyInventory.js` still
+connects correctly locally afterward (same known-stale reference-number
+mismatch as always, not a new regression). `npm install jsonwebtoken`
+also surfaced a pre-existing critical `proxy-addr` vulnerability
+(transitive via Express) - unrelated to the new dependency, but
+genuinely relevant now that this is headed behind a real reverse proxy
+(Vercel/Render) rather than just localhost - fixed with
+`npm audit fix` (no breaking change). The `xlsx` high-severity advisory
+remains with no upstream fix available; it only affects the offline
+Excel-import scripts, not the live request path.
+
+**Verified end to end after the rewrite** - full curl regression (wrong
+credentials, missing fields, no token, valid login, protected metrics,
+AI search, a tampered token correctly rejected, logout, and the
+stateless "still valid after logout" case) and the full browser flow via
+Playwright (signed-out redirect, wrong-credential error, real login,
+AI search answering in ~70ms, logout, dashboard re-protected) - all
+passing, zero frontend code changes required since `lib/auth.ts`/
+`lib/api.ts` only ever treated the token as an opaque string.
+
+## Third follow-up, same session: actually deploying, live, via the Vercel CLI
+
+Asked directly to set up MongoDB Atlas and then to proceed with deploying.
+Did this for real, not just documented how to - `npx vercel login` (device
+auth flow, user approved in their own browser), then linked and deployed
+both `backend/` and `frontend/` as separate Vercel projects from the same
+GitHub repo. Two more real bugs found live, neither hypothetical:
+
+**Bug: Vercel's zero-config Express detection wants a different export
+shape than the manual `api/index.js` setup assumed.** First backend
+deploy returned `FUNCTION_INVOCATION_FAILED`. Logs: *"Invalid export
+found in module '/var/task/app.js'. The default export must be a
+function or server."* Vercel 63's "Detected Express" framework preset
+auto-picks `app.js` at the project root and invokes it directly -
+bypassing the `vercel.json` rewrite + `api/index.js` setup entirely - and
+expects its default export to BE the Express app, not the
+`{ app, ensureDbConnected, MONGODB_URI }` wrapper object `app.js`
+exported. Fixed by making `module.exports = app` the default export and
+attaching the two helpers as properties on that same function
+(`module.exports.ensureDbConnected = ...`) - `server.js` and
+`api/index.js` both still reach them, Vercel's preset gets a direct
+function. Verified locally first (no regression) before redeploying.
+
+**Bug: `mongodb+srv://` SRV DNS lookups failed inside the deployed
+Vercel function too**, not just on this local machine. Same generic
+driver error either way ("Could not connect to any servers... IP that
+isn't whitelisted"), which is genuinely ambiguous - it's MongoDB's
+boilerplate suggestion regardless of the real cause. Ruled out the IP
+whitelist specifically (user added `0.0.0.0/0` in Atlas Network Access,
+confirmed via screenshot, confirmed "Active," waited for propagation,
+still failed) before concluding it was DNS again. Fixed by switching the
+`MONGODB_URI` actually used in Vercel's production env var from the SRV
+form to the **standard, non-SRV connection string** - all three shard
+hosts listed explicitly with `replicaSet=atlas-5rh72b-shard-0` (both
+values read directly off a real `hello` command result from a working
+local connection, not guessed) - which needs only ordinary A-record DNS
+lookups, not the SRV/TXT record types that seem to be the actual
+trouble spot in both environments. This is also why the README's env
+var example now shows the standard form, not `+srv`, for anyone
+deploying this project in the future.
+
+**Also found live**: MongoDB Atlas's M0 free cluster (shared with the
+user's other projects) was over its 512MB quota (517MB used) before any
+of this project's data could be written - `logfacedb` (another project,
+left alone) and `sample_mflix` (Atlas's own default demo dataset,
+confirmed safe and dropped with the user's explicit go-ahead) were the
+two visible databases, though they only accounted for ~222MB of the
+517MB reported, meaning roughly 295MB was index/oplog overhead or
+reclaimable space not visible via a simple `listDatabases` size sum -
+dropping `sample_mflix` alone was enough to clear the import.
+
+**Live right now** (as of this session): backend at
+`https://backend-three-bice-67.vercel.app`, frontend at
+`https://frontend-cyan-eta-76.vercel.app`, both on Vercel's free tier,
+both using MongoDB Atlas's free M0 tier - the whole stack costs nothing
+to run at this scale. Full regression re-verified against the live
+deployment, not just curl: signed-out redirect, login with real
+credentials, dashboard loading real Atlas data (29.54 total, 14
+projects - the current real workbook content, not the old local-drift
+numbers), AI search answering in 863ms, Projects page navigation,
+logout - via an actual Playwright browser session hitting the real
+public URLs, the same rigor every other claim in this project has had.
+
+**One real security note carried forward, not resolved**: the Atlas
+password was shared in this chat in plaintext. Flagged immediately and
+a rotation was recommended; the user chose to keep the existing password
+rather than rotate it. Their call to make, but worth any future session
+in this project knowing that credential has been visible in a chat
+transcript.
+
 ## Not done (Session 20's likely territory)
 
-**Superseded by the follow-up above**: "publicly-reachable Ollama/
-ChromaDB" is no longer blocking anything - `/api/ai/ask` doesn't depend
-on either anymore. Still genuinely outstanding: no actual Vercel
-deployment (backend still needs a host - see the follow-up section for
-why it isn't pure-Vercel-serverless-ready yet). No password reset /
-multi-user accounts - still the one env-var admin. No stateless/
-scalable session store (Redis, JWT) - the in-memory `Set` is fine for
-one local Node process, not for anything that restarts independently,
-and *especially* not for actual Vercel serverless functions, which
-don't share memory between invocations at all - this is now the
-specific thing standing between "backend runs somewhere" and "backend
-runs on Vercel itself." No automated test suite - every verification in
-this project has been live and manual, Playwright-driven but not
+**Superseded three times over by this session's own follow-ups**:
+"publicly-reachable Ollama/ChromaDB" is no longer blocking anything
+(`/api/ai/ask` doesn't depend on either), the in-memory session store is
+gone (signed JWTs, serverless-safe), and - unlike earlier drafts of this
+section assumed - the app is now **actually deployed and live**, not
+just "ready to deploy." Real gaps that remain: no password reset /
+multi-user accounts - still the one env-var admin (a real JWT secret
+now, so compromising it would matter more than the old in-memory token
+ever did - rotate `JWT_SECRET` if that's ever a concern). No token
+revocation / denylist - a leaked token is valid for its full 24h TTL
+with no way to cut it off early, a real and stated limitation of going
+stateless. CORS is still wide open (`app.use(cors())`, no origin
+restriction) - the README's optional-hardening note about tightening it
+to the real frontend domain was never actually applied. Atlas's M0 free
+tier is genuinely small (512MB, already proven easy to fill) - fine for
+this course's 28 documents, not something to assume scales. No
+automated test suite - every verification in this project has been live
+and manual, Playwright-driven but not
 committed as a CI-run test file.

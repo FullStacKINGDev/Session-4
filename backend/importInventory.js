@@ -11,13 +11,22 @@
  *       node importInventory.js --reset    (empty both collections first)
  */
 
+try {
+    process.loadEnvFile();
+} catch {
+    // No .env file - fall back to the localhost default below.
+}
+
 const path = require("path");
 const XLSX = require("xlsx");
 const mongoose = require("mongoose");
 const Project = require("./models/Project");
 const Supplier = require("./models/Supplier");
 
-const MONGO_URI = "mongodb://localhost:27017/dashboardDB";
+// Deployment follow-up: so this can target MongoDB Atlas (or any other
+// remote cluster) without editing the file - same MONGODB_URI .env
+// variable server.js already uses, same localhost default for local dev.
+const MONGO_URI = process.env.MONGODB_URI || "mongodb://localhost:27017/dashboardDB";
 const WORKBOOK_PATH = path.join(__dirname, "data", "inventory.xlsm");
 const RESET = process.argv.includes("--reset");
 

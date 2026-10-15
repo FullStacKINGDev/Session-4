@@ -1,4 +1,4 @@
-const { createSession, destroySession } = require("../middleware/auth");
+const { createSession } = require("../middleware/auth");
 
 /**
  * POST /api/auth/login
@@ -6,7 +6,7 @@ const { createSession, destroySession } = require("../middleware/auth");
  * Body: { email, password }
  * Checks against the one demo admin account in .env (ADMIN_EMAIL/
  * ADMIN_PASSWORD) - see middleware/auth.js for why this is a plain
- * env-var check and an in-memory token, not a Users collection + bcrypt.
+ * env-var check and a signed JWT, not a Users collection + bcrypt.
  */
 const login = (req, res) => {
     const email = typeof req.body?.email === "string" ? req.body.email.trim() : "";
@@ -20,20 +20,21 @@ const login = (req, res) => {
         return res.status(401).json({ success: false, message: "Invalid email or password" });
     }
 
-    const token = createSession();
+    const token = createSession({ email });
     res.status(200).json({ success: true, data: { token } });
 };
 
 /**
  * POST /api/auth/logout
  *
- * Invalidates the caller's own token (if any). Always succeeds - logging
- * out an already-invalid token isn't an error.
+ * JWTs are stateless (middleware/auth.js) - there's nothing server-side
+ * left to invalidate, so this is a no-op that just confirms the call.
+ * Signing out happens on the client (frontend/lib/auth.ts's
+ * clearToken()). Kept as a real endpoint rather than removed so the
+ * frontend's existing call doesn't need special-casing, and so a future
+ * denylist-based revocation would have a natural place to live.
  */
-const logout = (req, res) => {
-    const header = req.headers.authorization || "";
-    const token = header.startsWith("Bearer ") ? header.slice(7) : null;
-    if (token) destroySession(token);
+const logout = (_req, res) => {
     res.status(200).json({ success: true });
 };
 

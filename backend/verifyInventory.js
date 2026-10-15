@@ -4,11 +4,17 @@
  * Run:  node verifyInventory.js
  */
 
+try {
+    process.loadEnvFile();
+} catch {
+    // No .env file - fall back to the localhost default below.
+}
+
 const mongoose = require("mongoose");
 const Project = require("./models/Project");
 const Supplier = require("./models/Supplier");
 
-const MONGO_URI = "mongodb://localhost:27017/dashboardDB";
+const MONGO_URI = process.env.MONGODB_URI || "mongodb://localhost:27017/dashboardDB";
 
 // Reference numbers from the workbook / slide deck
 const EXPECTED = {
